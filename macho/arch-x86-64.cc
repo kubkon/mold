@@ -136,11 +136,22 @@ void Subsection<X86_64>::scan_relocations(Context<X86_64> &ctx) {
     if (!sym)
       continue;
 
+    if (sym->is_imported && sym->file->is_dylib)
+      ((DylibFile<X86_64> *)sym->file)->is_needed = true;
+
     switch (r.type) {
-    case X86_64_RELOC_GOT_LOAD:
-      sym->flags |= NEEDS_GOT;
+    case X86_64_RELOC_UNSIGNED:
+      if (sym->is_imported) {
+        if (r.p2size != 3) {
+          Error(ctx) << this->isec << ": " << r << " relocation at offset 0x"
+                     << std::hex << r.offset << " against symbol `"
+                     << *sym << "' can not be used";
+        }
+        r.needs_dynrel = true;
+      }
       break;
     case X86_64_RELOC_GOT:
+    case X86_64_RELOC_GOT_LOAD:
       sym->flags |= NEEDS_GOT;
       break;
     case X86_64_RELOC_TLV:
@@ -148,11 +159,8 @@ void Subsection<X86_64>::scan_relocations(Context<X86_64> &ctx) {
       break;
     }
 
-    if (sym->is_imported) {
+    if (sym->is_imported)
       sym->flags |= NEEDS_STUB;
-      if (sym->file->is_dylib)
-        ((DylibFile<X86_64> *)sym->file)->is_needed = true;
-    }
   }
 }
 
@@ -175,10 +183,8 @@ void Subsection<X86_64>::apply_reloc(Context<X86_64> &ctx, u8 *buf) {
     case X86_64_RELOC_SIGNED_4:
       val += r.sym ? r.sym->get_addr(ctx) : r.subsec->get_addr(ctx);
       break;
-    case X86_64_RELOC_GOT_LOAD:
-      val += r.sym->get_got_addr(ctx);
-      break;
     case X86_64_RELOC_GOT:
+    case X86_64_RELOC_GOT_LOAD:
       val += r.sym->get_got_addr(ctx);
       break;
     case X86_64_RELOC_TLV:

@@ -138,15 +138,13 @@ void Subsection<X86_64>::scan_relocations(Context<X86_64> &ctx) {
 
     switch (r.type) {
     case X86_64_RELOC_GOT_LOAD:
-      if (sym->is_imported)
-        sym->flags |= NEEDS_GOT;
+      sym->flags |= NEEDS_GOT;
       break;
     case X86_64_RELOC_GOT:
       sym->flags |= NEEDS_GOT;
       break;
     case X86_64_RELOC_TLV:
-      if (sym->is_imported)
-        sym->flags |= NEEDS_THREAD_PTR;
+      sym->flags |= NEEDS_THREAD_PTR;
       break;
     }
 
@@ -166,7 +164,7 @@ void Subsection<X86_64>::apply_reloc(Context<X86_64> &ctx, u8 *buf) {
       continue;
     }
 
-    u64 val = 0;
+    u64 val = r.addend;
 
     switch (r.type) {
     case X86_64_RELOC_UNSIGNED:
@@ -175,38 +173,25 @@ void Subsection<X86_64>::apply_reloc(Context<X86_64> &ctx, u8 *buf) {
     case X86_64_RELOC_SIGNED_1:
     case X86_64_RELOC_SIGNED_2:
     case X86_64_RELOC_SIGNED_4:
-      val = r.sym ? r.sym->get_addr(ctx) : r.subsec->get_addr(ctx);
+      val += r.sym ? r.sym->get_addr(ctx) : r.subsec->get_addr(ctx);
       break;
     case X86_64_RELOC_GOT_LOAD:
-      if (r.sym->got_idx != -1) {
-        val = r.sym->get_got_addr(ctx);
-      } else {
-        // Relax MOVQ into LEAQ
-        if (buf[r.offset - 2] != 0x8b)
-          Error(ctx) << isec << ": invalid GOT_LOAD relocation";
-        buf[r.offset - 2] = 0x8d;
-        val = r.sym->get_addr(ctx);
-      }
+      val += r.sym->get_got_addr(ctx);
       break;
     case X86_64_RELOC_GOT:
-      val = r.sym->get_got_addr(ctx);
+      val += r.sym->get_got_addr(ctx);
       break;
     case X86_64_RELOC_TLV:
-      if (r.sym->tlv_idx != -1) {
-        val = r.sym->get_tlv_addr(ctx);
-      } else {
-        // Relax MOVQ into LEAQ
-        if (buf[r.offset - 2] != 0x8b)
-          Error(ctx) << isec << ": invalid TLV relocation";
-        buf[r.offset - 2] = 0x8d;
-        val = r.sym->get_addr(ctx);
-      }
+      val += r.sym->get_tlv_addr(ctx);
       break;
     default:
       Fatal(ctx) << isec << ": unknown reloc: " << (int)r.type;
     }
 
-    val += r.addend;
+    // An address of a thread-local variable is computed as an offset
+    // to the beginning of the first thread-local section.
+    if (isec.hdr.type == S_THREAD_LOCAL_VARIABLES)
+      val -= ctx.tls_begin;
 
     if (r.is_pcrel)
       val -= get_addr(ctx) + r.offset + 4 + get_reloc_addend(r.type);
